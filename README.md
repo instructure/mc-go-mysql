@@ -1,5 +1,7 @@
 # go-mysql
 
+test-github-action-1
+
 A pure go library to handle MySQL network protocol and replication.
 
 ![semver](https://img.shields.io/github/v/tag/instructure/mc-go-mysql)
