@@ -6,6 +6,8 @@ A pure go library to handle MySQL network protocol and replication.
 ![example workflow](https://github.com/instructure/mc-go-mysql/actions/workflows/ci.yml/badge.svg)
 ![gomod version](https://img.shields.io/github/go-mod/go-version/instructure/mc-go-mysql/master)
 
+Test #1
+
 ## How to migrate to this repo
 To change the used package in your repo it's enough to add this `replace` directive to your `go.mod`:
 ```
