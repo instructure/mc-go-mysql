@@ -55,11 +55,16 @@ type Canal struct {
 
 	ctx    context.Context
 	cancel context.CancelFunc
+	proofOfSuccess bool
 }
 
 // canal will retry fetching unknown table's meta after UnknownTableRetryPeriod
 var UnknownTableRetryPeriod = time.Second * time.Duration(10)
 var ErrExcludedTable = errors.New("excluded table meta")
+
+// 5 loops stand for 10 minutes, after which it will give up and throw an alert
+const maxAttempts int = 5
+const waitForRetrySeconds time.Duration = time.Duration(20 * time.Second)
 
 func NewCanal(cfg *Config) (*Canal, error) {
 	c := new(Canal)
@@ -197,21 +202,21 @@ func (c *Canal) GetDelay() uint32 {
 // Run will first try to dump all data from MySQL master `mysqldump`,
 // then sync from the binlog position in the dump data.
 // It will run forever until meeting an error or Canal closed.
-func (c *Canal) Run() error {
-	return c.run()
+func (c *Canal) Run(syncErrorCh chan error) error {
+	return c.run(syncErrorCh)
 }
 
 // RunFrom will sync from the binlog position directly, ignore mysqldump.
-func (c *Canal) RunFrom(pos mysql.Position) error {
+func (c *Canal) RunFrom(pos mysql.Position, syncErrorCh chan error) error {
 	c.master.Update(pos)
 
-	return c.Run()
+	return c.Run(syncErrorCh)
 }
 
-func (c *Canal) StartFromGTID(set mysql.GTIDSet) error {
+func (c *Canal) StartFromGTID(set mysql.GTIDSet, syncErrorCh chan error) error {
 	c.master.UpdateGTIDSet(set)
 
-	return c.Run()
+	return c.Run(syncErrorCh)
 }
 
 // Dump all data from MySQL master `mysqldump`, ignore sync binlog.
@@ -224,10 +229,20 @@ func (c *Canal) Dump() error {
 	return c.dump()
 }
 
-func (c *Canal) run() error {
+func (c *Canal) run(syncErrorCh chan error) error {
 	defer func() {
 		c.cancel()
 	}()
+
+	syncBlock := func() error {
+		errSync := c.runSyncBinlog()
+
+		if errors.Cause(errSync) != context.Canceled {
+			c.cfg.Logger.Errorf("canal start sync binlog err: %v", errSync)
+		}
+
+		return errSync
+	}
 
 	c.master.UpdateTimestamp(uint32(time.Now().Unix()))
 
@@ -243,14 +258,66 @@ func (c *Canal) run() error {
 		}
 	}
 
-	if err := c.runSyncBinlog(); err != nil {
-		if errors.Cause(err) != context.Canceled {
-			c.cfg.Logger.Errorf("canal start sync binlog err: %v", err)
-			return errors.Trace(err)
+	return c.handleRetriableSync(syncBlock, c.prepareSyncer, syncErrorCh)
+}
+
+func (c *Canal) handleRetriableSync(syncF func() error, prepareF func() error, syncErrorCh chan error) error {
+	var attemptNum int
+	var sleep time.Duration
+
+	resetAttempts := func(a *int, s *time.Duration) {
+		*a = 0
+		*s = waitForRetrySeconds
+		c.proofOfSuccess = false
+	}
+
+	shouldStopRetrying := func(attempt int, e error) bool {
+		if attempt >= maxAttempts {
+			if e != nil {
+				// communicate the error to the upper layer (client)
+				// in case we exhaust all the attempts
+				resetAttempts(&attemptNum, &sleep)
+				syncErrorCh <- e
+				return true
+			}
 		}
+		return false
+	}
+
+	resetAttempts(&attemptNum, &sleep)
+
+	for {
+		errSync := syncF()
+
+		if c.proofOfSuccess {
+			resetAttempts(&attemptNum, &sleep)
+		}
+
+		if errors.Cause(errSync) != context.Canceled {
+			log.Errorf("canal start sync binlog err: %v", errSync)
+		}
+
+		if shouldStopRetrying(attemptNum, errSync) {
+			return errSync
+		}
+
+		errPrepare := prepareF()
+
+		if shouldStopRetrying(attemptNum, errPrepare) {
+			return errPrepare
+		}
+
+		if attemptNum > 0 {
+			time.Sleep(sleep)
+			sleep = sleep * 2
+		}
+		attemptNum++
+
+		log.Infof("Sync retry attempt num: %d, wait time: %s", attemptNum, sleep)
 	}
 
 	return nil
+
 }
 
 func (c *Canal) Close() {

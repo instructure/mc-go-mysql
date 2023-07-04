@@ -171,6 +171,8 @@ func (c *Canal) runSyncBinlog() error {
 			c.master.Update(pos)
 			c.master.UpdateTimestamp(ev.Header.Timestamp)
 
+			c.proofOfSuccess = true
+
 			if err := c.eventHandler.OnPosSynced(ev.Header, pos, c.master.GTIDSet(), force); err != nil {
 				return errors.Trace(err)
 			}
