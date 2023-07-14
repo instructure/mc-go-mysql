@@ -83,7 +83,8 @@ func main() {
 	}
 
 	go func() {
-		err = c.RunFrom(startPos)
+		syncErrorCh := make(chan error, 1)
+		err = c.RunFrom(startPos, syncErrorCh)
 		if err != nil {
 			fmt.Printf("start canal err %v", err)
 		}

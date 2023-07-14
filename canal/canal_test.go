@@ -82,7 +82,8 @@ func (s *canalTestSuite) SetUpSuite(c *C) {
 	s.c.SetEventHandler(&testEventHandler{c: c})
 	go func() {
 		set, _ := mysql.ParseGTIDSet("mysql", "")
-		err = s.c.StartFromGTID(set)
+		syncErrorCh := make(chan error, 1)
+		err = s.c.StartFromGTID(set, syncErrorCh)
 		c.Assert(err, IsNil)
 	}()
 }
