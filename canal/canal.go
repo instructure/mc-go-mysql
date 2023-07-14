@@ -63,8 +63,8 @@ var UnknownTableRetryPeriod = time.Second * time.Duration(10)
 var ErrExcludedTable = errors.New("excluded table meta")
 
 // 5 loops stand for 10 minutes, after which it will give up and throw an alert
-const maxAttempts int = 5
-const waitForRetrySeconds time.Duration = time.Duration(20 * time.Second)
+const maxAttempts = 5
+const waitForRetrySeconds = 20 * time.Second
 
 func NewCanal(cfg *Config) (*Canal, error) {
 	c := new(Canal)
